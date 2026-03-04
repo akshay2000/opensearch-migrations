@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<schema name="imdb_movies" version="1.6">
+
+  <!-- Field Types -->
+  <fieldType name="string" class="solr.StrField" sortMissingLast="true" />
+  <fieldType name="strings" class="solr.StrField" sortMissingLast="true" multiValued="true" />
+  <fieldType name="boolean" class="solr.BoolField" sortMissingLast="true" />
+  <fieldType name="booleans" class="solr.BoolField" sortMissingLast="true" multiValued="true" />
+  <fieldType name="pint" class="solr.IntPointField" docValues="true" />
+  <fieldType name="pints" class="solr.IntPointField" docValues="true" multiValued="true" />
+  <fieldType name="plong" class="solr.LongPointField" docValues="true" />
+  <fieldType name="plongs" class="solr.LongPointField" docValues="true" multiValued="true" />
+  <fieldType name="pfloat" class="solr.FloatPointField" docValues="true" />
+  <fieldType name="pfloats" class="solr.FloatPointField" docValues="true" multiValued="true" />
+  <fieldType name="pdouble" class="solr.DoublePointField" docValues="true" />
+  <fieldType name="pdoubles" class="solr.DoublePointField" docValues="true" multiValued="true" />
+  <fieldType name="pdate" class="solr.DatePointField" docValues="true" />
+  <fieldType name="pdates" class="solr.DatePointField" docValues="true" multiValued="true" />
+  <fieldType name="text_general" class="solr.TextField" positionIncrementGap="100">
+    <analyzer type="index">
+      <tokenizer class="solr.StandardTokenizerFactory" />
+      <filter class="solr.LowerCaseFilterFactory" />
+    </analyzer>
+    <analyzer type="query">
+      <tokenizer class="solr.StandardTokenizerFactory" />
+      <filter class="solr.LowerCaseFilterFactory" />
+    </analyzer>
+  </fieldType>
+
+  <!-- Fields -->
+  <field name="id" type="string" indexed="true" stored="true" required="true" />
+  <field name="title" type="text_general" indexed="true" stored="true" />
+  <field name="plot" type="text_general" indexed="true" stored="true" />
+  <field name="rating" type="pfloat" indexed="true" stored="true" />
+  <field name="rank" type="pint" indexed="true" stored="true" />
+  <field name="year" type="pint" indexed="true" stored="true" />
+  <field name="running_time_secs" type="pint" indexed="true" stored="true" />
+  <field name="release_date" type="pdate" indexed="true" stored="true" />
+  <field name="image_url" type="string" indexed="false" stored="true" />
+  <field name="directors" type="string" indexed="true" stored="true" multiValued="true" />
+  <field name="actors" type="string" indexed="true" stored="true" multiValued="true" />
+  <field name="genres" type="string" indexed="true" stored="true" multiValued="true" />
+
+  <!-- Required by Solr internals -->
+  <field name="_version_" type="plong" indexed="true" stored="true" />
+
+  <!-- Unique Key -->
+  <uniqueKey>id</uniqueKey>
+
+</schema>
