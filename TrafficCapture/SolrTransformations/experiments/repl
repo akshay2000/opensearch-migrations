@@ -1,0 +1,50 @@
+#!/bin/bash
+# Interactive REPL for executing Solr queries against the imdb_movies collection.
+# Usage: ./repl [port]
+#   port  – Solr port (default: 8983)
+#
+# Enter full Solr parameter strings separated by &. Examples:
+#   solr> q=*:*
+#   solr> q=title:"Harry Potter"&rows=5
+#   solr> q=title:batman&fq=year:[2010 TO *]&facet=true&facet.field=genre
+#
+# If input contains no '=' it is treated as a plain q= value for convenience:
+#   solr> title:"Harry Potter"
+
+SOLR_PORT="${1:-8983}"
+SOLR_COLLECTION="imdb_movies"
+SOLR_BASE="http://localhost:${SOLR_PORT}/solr/${SOLR_COLLECTION}/select"
+
+echo "Solr Query REPL  (collection: ${SOLR_COLLECTION}, port: ${SOLR_PORT})"
+echo "Enter Solr params (e.g.  q=title:\"Harry Potter\"&fq=year:[2010 TO *]&facet=true&facet.field=genre )"
+echo "Plain text without '=' is treated as a q= value.  Type 'quit' to exit."
+echo ""
+
+while true; do
+  read -e -p "solr> " input
+  # Handle EOF (Ctrl-D) or explicit quit/exit
+  if [[ $? -ne 0 ]] || [[ "$input" == "quit" ]] || [[ "$input" == "exit" ]]; then
+    echo "Bye!"
+    break
+  fi
+  # Skip empty input
+  if [[ -z "$input" ]]; then
+    continue
+  fi
+  # Add to readline history for up/down arrow navigation
+  history -s "$input"
+
+  # If input has no '=' treat entire input as the q value (convenience shortcut)
+  if [[ "$input" != *"="* ]]; then
+    input="q=${input}"
+  fi
+
+  # Build curl args: split on & and URL-encode each key=value pair
+  curl_args=(--silent --get)
+  IFS='&' read -ra params <<< "$input"
+  for param in "${params[@]}"; do
+    curl_args+=(--data-urlencode "$param")
+  done
+
+  curl "${curl_args[@]}" "${SOLR_BASE}" | jq -C . | less -R
+done
