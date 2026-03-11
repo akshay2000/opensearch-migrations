@@ -1,0 +1,67 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "ShimMain - Solr Only (port 9081)",
+      "request": "launch",
+      "mainClass": "org.opensearch.migrations.transform.shim.ShimMain",
+      "projectName": "transformationShim",
+      "args": [
+        "--listenPort", "9081",
+        "--target", "solr=http://localhost:8983",
+        "--primary", "solr"
+      ]
+    },
+    {
+      "type": "java",
+      "name": "ShimMain - OpenSearch Only (port 9082)",
+      "request": "launch",
+      "mainClass": "org.opensearch.migrations.transform.shim.ShimMain",
+      "projectName": "transformationShim",
+      "args": [
+        "--listenPort", "9082",
+        "--target", "opensearch=http://localhost:9200",
+        "--primary", "opensearch",
+        "--targetTransform", "opensearch=request:TrafficCapture/SolrTransformations/transforms/dist/solr-to-opensearch-request.js,response:TrafficCapture/SolrTransformations/transforms/dist/solr-to-opensearch-response.js",
+        "--watchTransforms"
+      ]
+    },
+    {
+      "type": "java",
+      "name": "ShimMain - Dual Target, Solr Primary (port 9083)",
+      "request": "launch",
+      "mainClass": "org.opensearch.migrations.transform.shim.ShimMain",
+      "projectName": "transformationShim",
+      "args": [
+        "--listenPort", "9083",
+        "--target", "solr=http://localhost:8983",
+        "--target", "opensearch=http://localhost:9200",
+        "--targetTransform", "opensearch=request:TrafficCapture/SolrTransformations/transforms/dist/solr-to-opensearch-request.js,response:TrafficCapture/SolrTransformations/transforms/dist/solr-to-opensearch-response.js",
+        "--primary", "solr",
+        "--validator", "field-equality:solr,opensearch:ignore=responseHeader.QTime,responseHeader.params.NOW",
+        "--validator", "doc-count:solr,opensearch:assert=solr==opensearch",
+        "--timeout", "5000",
+        "--watchTransforms"
+      ]
+    },
+    {
+      "type": "java",
+      "name": "ShimMain - Dual Target, OpenSearch Primary (port 9084)",
+      "request": "launch",
+      "mainClass": "org.opensearch.migrations.transform.shim.ShimMain",
+      "projectName": "transformationShim",
+      "args": [
+        "--listenPort", "9084",
+        "--target", "solr=http://localhost:8983",
+        "--target", "opensearch=http://localhost:9200",
+        "--targetTransform", "opensearch=request:TrafficCapture/SolrTransformations/transforms/dist/solr-to-opensearch-request.js,response:TrafficCapture/SolrTransformations/transforms/dist/solr-to-opensearch-response.js",
+        "--primary", "opensearch",
+        "--validator", "field-equality:solr,opensearch:ignore=responseHeader.QTime,responseHeader.params.NOW",
+        "--validator", "doc-count:solr,opensearch:assert=solr==opensearch",
+        "--timeout", "5000",
+        "--watchTransforms"
+      ]
+    }
+  ]
+}
