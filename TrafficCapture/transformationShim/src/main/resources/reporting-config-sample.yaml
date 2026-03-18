@@ -1,0 +1,64 @@
+# =============================================================================
+# Validation Reporting Framework — Sample Configuration
+# =============================================================================
+# Pass this file to the shim via: --reporting-config reporting-config.yaml
+#
+# The reporting framework captures per-request comparison metrics (hit count
+# drift, query latency, facet diffs, custom transform metrics, request context)
+# and streams them as structured documents to an external OpenSearch cluster
+# for visualization and alerting via OpenSearch Dashboards.
+# =============================================================================
+
+# Master switch. Set to false to disable reporting without removing the config.
+# Default: true
+enabled: true
+
+# Whether to include the full request body in each validation document.
+# Useful for debugging but increases document size significantly.
+# Default: false
+include_request_body: true
+
+sink:
+  # Sink type. Currently only "opensearch" is supported.
+  # Future options may include "cloudwatch".
+  type: opensearch
+
+  opensearch:
+    # URI of the reporting OpenSearch cluster (required).
+    # This is a SEPARATE cluster from the migration target — it stores
+    # validation metrics only.
+    uri: https://search-zadaksha-solr-reporting-62sspztuc3ea4djtcp3scnwine.eu-west-1.es.amazonaws.com
+
+    # Index name prefix. Documents are indexed into time-based indices
+    # named {prefix}-{yyyy.MM.dd} (e.g., shim-metrics-2025.03.17).
+    # Default: shim-metrics
+    index_prefix: shim-metrics
+
+    # Number of documents to buffer before sending a bulk index request.
+    # Higher values reduce HTTP overhead but increase memory usage and
+    # latency before documents appear in the reporting cluster.
+    # Default: 100
+    bulk_size: 1
+
+    # Maximum time (ms) between bulk flushes. Ensures documents are indexed
+    # even under low request volume.
+    # Default: 5000
+    flush_interval_ms: 5000
+
+    # Authentication for the reporting cluster (optional).
+    # Omit this section entirely if the cluster has no authentication.
+    auth:
+      username: admin
+      password: Admin@123
+
+      # TLS settings for the reporting cluster connection (optional).
+      # Only relevant when the URI uses https://.
+      tls:
+        # Skip certificate verification. Use only in dev/test environments.
+        # Default: false
+        insecure: true
+
+        # Path to a Java truststore (JKS/PKCS12) containing the reporting
+        # cluster's CA certificate. Use this instead of insecure=true in
+        # production environments.
+        # trust_store_path: /path/to/truststore.jks

@@ -20,6 +20,7 @@ import org.opensearch.migrations.transform.shim.validation.Target;
 import org.opensearch.migrations.transform.shim.validation.TargetResponse;
 import org.opensearch.migrations.transform.shim.validation.ValidationResult;
 import org.opensearch.migrations.transform.shim.validation.ValidationRule;
+import org.opensearch.migrations.transform.shim.reporting.MetricsCollector;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -78,6 +79,7 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
     private final int maxContentLength;
     private final AtomicInteger activeRequests;
     private final AtomicLong requestCounter = new AtomicLong(0);
+    private final MetricsCollector metricsCollector; // nullable — disabled when no config
 
     /** Connection pools keyed by target name. Lazily initialized on first use. */
     private volatile AbstractChannelPoolMap<String, FixedChannelPool> poolMap;
@@ -90,7 +92,8 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
         Duration secondaryTimeout,
         SslContext backendSslContext,
         int maxContentLength,
-        AtomicInteger activeRequests
+        AtomicInteger activeRequests,
+        MetricsCollector metricsCollector
     ) {
         super(false);
         this.targets = targets;
@@ -101,6 +104,7 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
         this.backendSslContext = backendSslContext;
         this.maxContentLength = maxContentLength;
         this.activeRequests = activeRequests;
+        this.metricsCollector = metricsCollector;
     }
 
     @Override
@@ -147,20 +151,30 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
         var requestMap = HttpMessageUtil.requestToMap(request);
         request.release();
 
+        // Per-request accumulators keyed by target name
+        var perTargetTransformMetrics = new LinkedHashMap<String, Map<String, Object>>();
+        var perTargetTransformedRequests = new LinkedHashMap<String, Map<String, Object>>();
+
         long requestId = requestCounter.getAndIncrement();
-        var futures = dispatchAll(requestMap);
-        handlePrimaryCompletion(ctx, futures, keepAlive, requestMap, requestId);
+        var futures = dispatchAll(requestMap, perTargetTransformMetrics, perTargetTransformedRequests);
+        handlePrimaryCompletion(ctx, futures, keepAlive, requestMap, requestId,
+            perTargetTransformMetrics, perTargetTransformedRequests);
     }
 
     private Map<String, CompletableFuture<TargetResponse>> dispatchAll(
-        Map<String, Object> requestMap
+        Map<String, Object> requestMap,
+        Map<String, Map<String, Object>> perTargetTransformMetrics,
+        Map<String, Map<String, Object>> perTargetTransformedRequests
     ) {
         Map<String, CompletableFuture<TargetResponse>> futures = new LinkedHashMap<>();
         for (String name : activeTargets) {
             Target target = targets.get(name);
             Map<String, Object> targetRequestMap = target.requestTransform() != null
                 ? deepCopyMap(requestMap) : requestMap;
-            futures.put(name, dispatchToTarget(target, targetRequestMap, requestMap));
+            var targetMetrics = new LinkedHashMap<String, Object>();
+            perTargetTransformMetrics.put(name, targetMetrics);
+            futures.put(name, dispatchToTarget(target, targetRequestMap, requestMap,
+                targetMetrics, perTargetTransformedRequests));
         }
         return futures;
     }
@@ -170,7 +184,9 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
         Map<String, CompletableFuture<TargetResponse>> futures,
         boolean keepAlive,
         Map<String, Object> requestMap,
-        long requestId
+        long requestId,
+        Map<String, Map<String, Object>> perTargetTransformMetrics,
+        Map<String, Map<String, Object>> perTargetTransformedRequests
     ) {
         futures.get(primaryTarget).whenComplete((primaryResp, primaryEx) ->
             ctx.channel().eventLoop().execute(() -> {
@@ -181,6 +197,18 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
                     Map<String, TargetResponse> allResponses = collectResponses(futures);
                     List<ValidationResult> results = runValidators(allResponses);
                     FullHttpResponse response = buildFinalResponse(primary, allResponses, results);
+
+                    // Invoke metrics collector if enabled (non-blocking, fire-and-forget)
+                    if (metricsCollector != null) {
+                        try {
+                            metricsCollector.collect(requestMap,
+                                perTargetTransformedRequests, allResponses,
+                                perTargetTransformMetrics);
+                        } catch (Exception me) {
+                            log.error("MetricsCollector error (non-fatal)", me);
+                        }
+                    }
+
                     // TODO: enable if latency headers matter
                     // response.headers().set("X-Shim-Latency",
                     //     Duration.ofNanos(System.nanoTime() - shimStartNanos).toMillis());
@@ -252,22 +280,30 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
     }
 
     private CompletableFuture<TargetResponse> dispatchToTarget(
-        Target target, Map<String, Object> requestMap, Map<String, Object> originalRequestMap
+        Target target, Map<String, Object> requestMap, Map<String, Object> originalRequestMap,
+        Map<String, Object> targetMetrics,
+        Map<String, Map<String, Object>> perTargetTransformedRequests
     ) {
         CompletableFuture<TargetResponse> future = new CompletableFuture<>();
         long startNanos = System.nanoTime();
 
         try {
             long reqTransformStart = System.nanoTime();
-            Map<String, Object> targetMap = applyRequestTransform(target, requestMap);
+            Map<String, Object> targetMap = applyRequestTransform(target, requestMap, targetMetrics);
             Duration reqTransformDuration = Duration.ofNanos(System.nanoTime() - reqTransformStart);
+
+            // Capture the transformed request for this target
+            if (target.requestTransform() != null) {
+                perTargetTransformedRequests.put(target.name(), targetMap);
+            }
 
             FullHttpRequest targetRequest = applyAuth(target, HttpMessageUtil.mapToRequest(targetMap));
             URI uri = target.uri();
             targetRequest.headers().set(HttpHeaderNames.HOST,
                 uri.getHost() + (uri.getPort() != -1 ? ":" + uri.getPort() : ""));
 
-            sendViaPool(target, targetRequest, future, startNanos, originalRequestMap, reqTransformDuration);
+            sendViaPool(target, targetRequest, future, startNanos, originalRequestMap,
+                reqTransformDuration, targetMetrics);
         } catch (Exception e) {
             log.error("Error dispatching to target {}", target.name(), e);
             future.complete(TargetResponse.error(target.name(), elapsed(startNanos), e));
@@ -277,7 +313,8 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
 
     private void sendViaPool(
         Target target, FullHttpRequest reqToSend, CompletableFuture<TargetResponse> future,
-        long startNanos, Map<String, Object> originalRequestMap, Duration reqTransformDuration
+        long startNanos, Map<String, Object> originalRequestMap, Duration reqTransformDuration,
+        Map<String, Object> targetMetrics
     ) {
         ChannelPool pool = poolMap.get(target.name());
         Future<Channel> acquireFuture = pool.acquire();
@@ -292,7 +329,8 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
             ch.pipeline().addLast(HANDLER_READ_TIMEOUT, new ReadTimeoutHandler(
                 secondaryTimeout.toSeconds(), TimeUnit.SECONDS));
             ch.pipeline().addLast(HANDLER_RESPONSE, new PooledTargetResponseHandler(
-                target, future, startNanos, originalRequestMap, reqTransformDuration, pool, ch));
+                target, future, startNanos, originalRequestMap, reqTransformDuration,
+                pool, ch, targetMetrics));
 
             ch.writeAndFlush(reqToSend).addListener((ChannelFutureListener) wf -> {
                 if (!wf.isSuccess()) {
@@ -309,17 +347,39 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> applyRequestTransform(Target target, Map<String, Object> requestMap) {
+    private Map<String, Object> applyRequestTransform(
+            Target target, Map<String, Object> requestMap, Map<String, Object> transformMetrics) {
         if (target.requestTransform() == null) return requestMap;
+        // Inject _metrics side-channel for transforms to write custom metrics
+        var metricsMap = new LinkedHashMap<String, Object>();
+        requestMap.put("_metrics", metricsMap);
         Object result = target.requestTransform().transformJson(requestMap);
+        requestMap.remove("_metrics");
+        // Collect any metrics the transform wrote
+        collectTransformMetrics(metricsMap, transformMetrics);
         if (result instanceof String) {
             return parseJsonMap((String) result, target.name());
         }
         if (result instanceof Map) {
             Map<String, Object> resultMap = (Map<String, Object>) result;
+            resultMap.remove("_metrics");
             if (!resultMap.isEmpty()) return resultMap;
         }
         return requestMap;
+    }
+
+    /**
+     * Collect valid metrics entries (String key → Number or String value) from a
+     * transform's _metrics map into the per-request accumulator.
+     */
+    static void collectTransformMetrics(Map<String, Object> source, Map<String, Object> accumulator) {
+        if (source == null || source.isEmpty()) return;
+        for (var entry : source.entrySet()) {
+            if (entry.getKey() instanceof String && (entry.getValue() instanceof Number
+                    || entry.getValue() instanceof String)) {
+                accumulator.put(entry.getKey(), entry.getValue());
+            }
+        }
     }
 
     private static Map<String, Object> parseJsonMap(String json, String targetName) {
@@ -548,10 +608,11 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
         private final Duration reqTransformDuration;
         private final ChannelPool pool;
         private final Channel channel;
+        private final Map<String, Object> transformMetrics;
 
         PooledTargetResponseHandler(Target target, CompletableFuture<TargetResponse> future, long startNanos,
                 Map<String, Object> originalRequestMap, Duration reqTransformDuration,
-                ChannelPool pool, Channel channel) {
+                ChannelPool pool, Channel channel, Map<String, Object> transformMetrics) {
             this.target = target;
             this.future = future;
             this.startNanos = startNanos;
@@ -559,6 +620,7 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
             this.reqTransformDuration = reqTransformDuration;
             this.pool = pool;
             this.channel = channel;
+            this.transformMetrics = transformMetrics;
         }
 
         @Override
@@ -605,12 +667,18 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
             var bundled = new LinkedHashMap<String, Object>();
             bundled.put("request", originalRequestMap);
             bundled.put("response", responseMap);
+            // Inject _metrics side-channel for response transforms
+            var metricsMap = new LinkedHashMap<String, Object>();
+            bundled.put("_metrics", metricsMap);
             Object transformResult = target.responseTransform().transformJson(bundled);
+            // Collect any metrics the transform wrote
+            collectTransformMetrics(metricsMap, transformMetrics);
 
             Map<String, Object> transformedMap = parseTransformResult(transformResult);
             if (transformedMap == null) {
                 return new Object[]{rawBody, statusCode};
             }
+            transformedMap.remove("_metrics");
 
             Map<String, Object> responseResult = (Map<String, Object>) transformedMap.get("response");
             if (responseResult == null) responseResult = transformedMap;

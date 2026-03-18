@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.opensearch.migrations.transform.shim.netty.MultiTargetRoutingHandler;
 import org.opensearch.migrations.transform.shim.validation.Target;
 import org.opensearch.migrations.transform.shim.validation.ValidationRule;
+import org.opensearch.migrations.transform.shim.reporting.MetricsCollector;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.Unpooled;
@@ -71,6 +72,7 @@ public class ShimProxy {
     private final SslContext backendSslContext;
     private final Duration secondaryTimeout;
     private final int maxContentLength;
+    private final MetricsCollector metricsCollector;
 
     private Channel serverChannel;
     private Channel healthChannel;
@@ -89,6 +91,22 @@ public class ShimProxy {
         Duration secondaryTimeout,
         int maxContentLength
     ) {
+        this(port, targets, primaryTarget, activeTargets, validators, sslEngineSupplier,
+            allowInsecureBackend, secondaryTimeout, maxContentLength, null);
+    }
+
+    public ShimProxy(
+        int port,
+        Map<String, Target> targets,
+        String primaryTarget,
+        Set<String> activeTargets,
+        List<ValidationRule> validators,
+        java.util.function.Supplier<SSLEngine> sslEngineSupplier,
+        boolean allowInsecureBackend,
+        Duration secondaryTimeout,
+        int maxContentLength,
+        MetricsCollector metricsCollector
+    ) {
         this.port = port;
         this.targets = new LinkedHashMap<>(targets);
         this.primaryTarget = primaryTarget;
@@ -98,6 +116,7 @@ public class ShimProxy {
         this.secondaryTimeout = secondaryTimeout != null ? secondaryTimeout : DEFAULT_TIMEOUT;
         this.maxContentLength = maxContentLength > 0 ? maxContentLength : DEFAULT_MAX_CONTENT_LENGTH;
         this.backendSslContext = buildBackendSslContext(allowInsecureBackend);
+        this.metricsCollector = metricsCollector;
 
         if (!this.targets.containsKey(primaryTarget)) {
             throw new IllegalArgumentException("Primary target '" + primaryTarget + "' not in targets");
@@ -218,7 +237,7 @@ public class ShimProxy {
 
         pipeline.addLast("multiTargetRouter", new MultiTargetRoutingHandler(
             targets, primaryTarget, activeTargets, validators, secondaryTimeout,
-            backendSslContext, maxContentLength, activeRequests));
+            backendSslContext, maxContentLength, activeRequests, metricsCollector));
         addLoggingHandler(pipeline, "E");
     }
 
