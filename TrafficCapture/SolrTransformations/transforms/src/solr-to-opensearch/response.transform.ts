@@ -13,6 +13,7 @@ import { buildResponseContext } from './context';
 import type { JavaMap } from './context';
 import { runPipeline } from './pipeline';
 import { responseRegistry } from './registry';
+import { flushMetrics } from './metrics';
 
 export function transform(msg: JavaMap): JavaMap {
   const request = msg.get('request');
@@ -29,5 +30,6 @@ export function transform(msg: JavaMap): JavaMap {
     response.set('payload', payload);
   }
   payload.set('inlinedJsonBody', ctx.responseBody);
+  flushMetrics(ctx._metrics, response);
   return response;
 }

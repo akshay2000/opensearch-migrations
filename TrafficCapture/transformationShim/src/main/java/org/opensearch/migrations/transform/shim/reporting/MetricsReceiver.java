@@ -136,6 +136,11 @@ public class MetricsReceiver {
             Map<String, Object> customMetrics = transformMetrics != null
                     ? new LinkedHashMap<>(transformMetrics) : new LinkedHashMap<>();
 
+            // Merge response transform metrics from the candidate target
+            if (candidateResponse != null && candidateResponse.responseTransformMetrics() != null) {
+                customMetrics.putAll(candidateResponse.responseTransformMetrics());
+            }
+
             ValidationDocument.ResponseRecord baselineResponseRecord = buildResponseRecord(baselineResponse);
             ValidationDocument.ResponseRecord candidateResponseRecord = buildResponseRecord(candidateResponse);
 

@@ -39,12 +39,17 @@ export const response: MicroTransform<ResponseContext> = {
     const hitsArray: JavaMap[] = hits.get('hits');
     const total: JavaMap = hits.get('total');
 
+    const relation: string = total.get('relation') || 'eq';
+    if (relation === 'gte') {
+      ctx.emitMetric('hits_total_approx');
+    }
+
     const responseMap = new Map();
     responseMap.set('numFound', total.get('value'));
     responseMap.set('start', ctx.requestParams.has('cursorMark')
       ? 0
       : Number.parseInt(ctx.requestParams.get('start') || '0', 10));
-    responseMap.set('numFoundExact', true);
+    responseMap.set('numFoundExact', relation === 'eq');
     responseMap.set('docs', hitsArray.map(hitToDoc));
     ctx.responseBody.set('response', responseMap);
 

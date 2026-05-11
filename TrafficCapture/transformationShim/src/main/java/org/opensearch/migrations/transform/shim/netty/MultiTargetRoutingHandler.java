@@ -935,6 +935,7 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
         }
 
         @Override
+        @SuppressWarnings("unchecked")
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpResponse backendResponse) {
             try {
                 int statusCode = backendResponse.status().code();
@@ -942,6 +943,7 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
                 byte[] finalBody = rawBody;
                 int finalStatusCode = statusCode;
                 Duration respTransformDuration = Duration.ZERO;
+                Map<String, Object> respTransformMetrics = null;
 
                 if (dispatchCtx != null) {
                     dispatchCtx.addBytesReceived(rawBody.length);
@@ -954,6 +956,8 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
                     respTransformDuration = Duration.ofNanos(System.nanoTime() - respTransformStart);
                     finalBody = (byte[]) transformed[0];
                     finalStatusCode = (int) transformed[1];
+                    respTransformMetrics = transformed.length > 2
+                        ? (Map<String, Object>) transformed[2] : null;
                 }
 
                 if (dispatchCtx != null) {
@@ -964,7 +968,8 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
                 Map<String, Object> parsedBody = tryParseJson(finalBody);
                 future.complete(new TargetResponse(
                     target.name(), finalStatusCode, finalBody, parsedBody,
-                    elapsed(startNanos), reqTransformDuration, respTransformDuration, null));
+                    elapsed(startNanos), reqTransformDuration, respTransformDuration, null,
+                    respTransformMetrics));
             } catch (Exception e) {
                 log.error("Error processing response from target {}", target.name(), e);
                 if (dispatchCtx != null) {
@@ -1013,15 +1018,18 @@ public class MultiTargetRoutingHandler extends SimpleChannelInboundHandler<FullH
 
             Map<String, Object> transformedMap = parseTransformResult(transformResult);
             if (transformedMap == null) {
-                return new Object[]{rawBody, statusCode};
+                return new Object[]{rawBody, statusCode, null};
             }
 
             Map<String, Object> responseResult = (Map<String, Object>) transformedMap.get(RESPONSE_KEY);
             if (responseResult == null) responseResult = transformedMap;
 
+            // Extract response transform metrics side-channel before serializing body
+            Map<String, Object> responseMetrics = (Map<String, Object>) responseResult.remove("_metrics");
+
             byte[] body = extractBody(responseResult, rawBody);
             int code = extractStatusCode(responseResult, statusCode);
-            return new Object[]{body, code};
+            return new Object[]{body, code, responseMetrics};
         }
 
         @SuppressWarnings("unchecked")

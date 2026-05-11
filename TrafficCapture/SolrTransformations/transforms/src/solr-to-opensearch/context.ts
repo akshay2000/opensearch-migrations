@@ -64,6 +64,10 @@ export interface ResponseContext {
   targetName?: string;
   /** Routing mode — 'single' or 'dual'. Set by the shim proxy. */
   mode?: string;
+  /** Record a limitation metric occurrence. */
+  emitMetric(metric: TransformMetricName): void;
+  /** Internal accumulator — use {@link emitMetric} instead. */
+  readonly _metrics: MetricsAccumulator;
 }
 
 const ENDPOINT_PATTERNS: [RegExp, SolrEndpoint][] = [
@@ -126,6 +130,7 @@ export function buildRequestContext(msg: JavaMap): RequestContext {
 
 export function buildResponseContext(request: JavaMap, response: JavaMap): ResponseContext {
   const uri: string = request.get('URI') || '';
+  const metrics = createMetrics();
   return {
     request,
     response,
@@ -135,5 +140,7 @@ export function buildResponseContext(request: JavaMap, response: JavaMap): Respo
     responseBody: getBodyMap(response.get('payload')),
     targetName: request.get('_targetName') || 'opensearch',
     mode: request.get('_mode') || 'single',
+    emitMetric: (metric: TransformMetricName) => incrementMetric(metrics, metric),
+    _metrics: metrics,
   };
 }

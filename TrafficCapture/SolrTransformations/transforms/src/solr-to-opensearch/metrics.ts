@@ -11,7 +11,8 @@ export type TransformMetricName =
   | 'terms_offset'
   | 'date_range_gap'
   | 'date_range_gap_compound'
-  | 'range_boundary';
+  | 'range_boundary'
+  | 'hits_total_approx';
 
 /** Per-request accumulator — metric name → count. */
 export type MetricsAccumulator = Map<TransformMetricName, number>;

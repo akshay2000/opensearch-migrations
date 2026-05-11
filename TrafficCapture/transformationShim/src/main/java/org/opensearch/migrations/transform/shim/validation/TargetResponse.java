@@ -16,11 +16,22 @@ public record TargetResponse(
     Duration latency,
     Duration requestTransformLatency,
     Duration responseTransformLatency,
-    Throwable error
+    Throwable error,
+    Map<String, Object> responseTransformMetrics
 ) {
+    /** Create a TargetResponse without response transform metrics (backward-compatible). */
+    public TargetResponse(
+        String targetName, int statusCode, byte[] rawBody, Map<String, Object> parsedBody,
+        Duration latency, Duration requestTransformLatency, Duration responseTransformLatency,
+        Throwable error
+    ) {
+        this(targetName, statusCode, rawBody, parsedBody, latency,
+             requestTransformLatency, responseTransformLatency, error, null);
+    }
+
     /** Create an error response. */
     public static TargetResponse error(String targetName, Duration latency, Throwable error) {
-        return new TargetResponse(targetName, -1, null, null, latency, Duration.ZERO, Duration.ZERO, error);
+        return new TargetResponse(targetName, -1, null, null, latency, Duration.ZERO, Duration.ZERO, error, null);
     }
 
     public boolean isSuccess() {
